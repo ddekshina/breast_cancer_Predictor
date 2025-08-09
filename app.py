@@ -1,4 +1,3 @@
-# app.py
 """
 Flask Web Application for Breast Cancer Risk Prediction
 Production-ready web interface with health recommendations
@@ -22,15 +21,24 @@ def initialize_predictor():
     global predictor
     try:
         model_path = 'models/latest_model.pkl'
+        
+        # If model doesn't exist, train it automatically
         if not os.path.exists(model_path):
-            print("❌ No trained model found. Please run breast_cancer_trainer.py first.")
-            return False
+            print("🔄 No trained model found. Training model automatically...")
+            
+            # Import and run trainer
+            from breast_cancer_trainer import BreastCancerTrainer
+            trainer = BreastCancerTrainer()
+            model_path = trainer.train_full_pipeline()
+            print(f"✅ Model trained and saved to: {model_path}")
         
         predictor = BreastCancerPredictor(model_path)
         print("✅ Predictor initialized successfully")
         return True
     except Exception as e:
         print(f"❌ Failed to initialize predictor: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 # HTML Template for the web interface
@@ -252,6 +260,15 @@ HTML_TEMPLATE = """
             font-size: 14px;
         }
         
+        .training-notice {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        
         @media (max-width: 768px) {
             .main-content {
                 flex-direction: column;
@@ -281,6 +298,8 @@ HTML_TEMPLATE = """
         
         <div class="main-content">
             <div class="input-section">
+                <div id="statusContainer"></div>
+                
                 <div class="model-info" id="modelInfo">
                     <strong>📊 Model Information:</strong><br>
                     <span id="modelDetails">Loading model details...</span>
@@ -468,6 +487,9 @@ HTML_TEMPLATE = """
     <script>
         // Load model information on page load
         window.onload = function() {
+            // Show training notice if needed
+            checkTrainingStatus();
+            
             fetch('/api/model-info')
                 .then(response => response.json())
                 .then(data => {
@@ -485,6 +507,30 @@ HTML_TEMPLATE = """
                     document.getElementById('modelDetails').innerHTML = '❌ Error loading model info';
                 });
         };
+        
+        function checkTrainingStatus() {
+            fetch('/health')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'unhealthy') {
+                        document.getElementById('statusContainer').innerHTML = `
+                            <div class="training-notice">
+                                <strong>⏳ First-time Setup:</strong> The model is being trained automatically. 
+                                This may take 1-2 minutes. Please wait...
+                            </div>
+                        `;
+                        
+                        // Check again after 30 seconds
+                        setTimeout(checkTrainingStatus, 30000);
+                    } else {
+                        // Remove training notice if it exists
+                        document.getElementById('statusContainer').innerHTML = '';
+                    }
+                })
+                .catch(error => {
+                    console.log('Health check failed:', error);
+                });
+        }
 
         // Handle form submission
         document.getElementById('predictionForm').addEventListener('submit', function(e) {
@@ -629,7 +675,12 @@ HTML_TEMPLATE = """
 def index():
     """Serve the main web interface."""
     if predictor is None:
-        return "❌ Model not loaded. Please run breast_cancer_trainer.py first.", 500
+        # Try to initialize predictor if not already done
+        initialize_predictor()
+        
+    if predictor is None:
+        return "❌ Model initialization failed. Please check logs.", 500
+        
     return render_template_string(HTML_TEMPLATE)
 
 @app.route('/api/model-info', methods=['GET'])
@@ -687,7 +738,7 @@ if __name__ == '__main__':
     # Initialize predictor
     if initialize_predictor():
         print("🌐 Starting web server...")
-        print("📱 Open http://localhost:5000 in your browser")
+        print("📱 Access the application in your browser")
         print("🔗 API endpoints:")
         print("   GET  /health - Health check")
         print("   GET  /api/model-info - Model information")
@@ -695,8 +746,8 @@ if __name__ == '__main__':
         print("   GET  /api/sample-data - Get sample data")
         print("-" * 50)
         
-        app.run(debug=True, host='0.0.0.0', port=5000)
+        app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
     else:
-        print("💡 Please run the following command first:")
-        print("   python breast_cancer_trainer.py")
-        print("\nThis will train the model and save it for the web app to use.")
+        print("⚠️ Model initialization failed, but starting server anyway...")
+        print("The model will be trained automatically on first request.")
+        app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
